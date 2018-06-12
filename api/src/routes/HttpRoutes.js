@@ -51,6 +51,7 @@ import personaIdentifierRESTHandler from 'api/routes/personas/personaIdentifierR
 import personaAttributeRESTHandler from 'api/routes/personas/personaAttributeRESTHandler';
 import * as routes from 'lib/constants/routes';
 
+const siteAdminId = '5b0c79f6265b3f30542b33ca';
 const router = new express.Router();
 router.use(setNoCacheHeaders);
 
@@ -233,8 +234,90 @@ restify.serve(router, User, {
   }
 });
 restify.serve(router, Client);
-restify.serve(router, Visualisation);
-restify.serve(router, Dashboard);
+restify.serve(router, Visualisation, {
+  preUpdate: (req, res, next) => {
+    const authInfo = getAuthFromRequest(req);
+    const scopes = getScopesFromRequest(authInfo);
+
+    let isSiteAdmin = false;
+    if (findIndex(scopes, item => item === SITE_ADMIN) > 0) {
+      isSiteAdmin = true;
+    }
+
+    if (!isSiteAdmin) {
+      const owner = `${req.erm.document.owner}`;
+      if (owner === siteAdminId) {
+        res.send(401);
+      } else {
+        next();
+      }
+    } else {
+      next();
+    }
+  },
+  preDelete: (req, res, next) => {
+    const authInfo = getAuthFromRequest(req);
+    const scopes = getScopesFromRequest(authInfo);
+
+    let isSiteAdmin = false;
+    if (findIndex(scopes, item => item === SITE_ADMIN) > 0) {
+      isSiteAdmin = true;
+    }
+
+    if (!isSiteAdmin) {
+      const owner = `${req.erm.document.owner}`;
+      if (owner === siteAdminId) {
+        res.send(401);
+      } else {
+        next();
+      }
+    } else {
+      next();
+    }
+  }
+});
+restify.serve(router, Dashboard, {
+  preUpdate: (req, res, next) => {
+    const authInfo = getAuthFromRequest(req);
+    const scopes = getScopesFromRequest(authInfo);
+
+    let isSiteAdmin = false;
+    if (findIndex(scopes, item => item === SITE_ADMIN) > 0) {
+      isSiteAdmin = true;
+    }
+
+    if (!isSiteAdmin) {
+      const owner = `${req.erm.document.owner}`;
+      if (owner === siteAdminId) {
+        res.send(401);
+      } else {
+        next();
+      }
+    } else {
+      next();
+    }
+  },
+  preDelete: (req, res, next) => {
+    const authInfo = getAuthFromRequest(req);
+    const scopes = getScopesFromRequest(authInfo);
+
+    let isSiteAdmin = false;
+    if (findIndex(scopes, item => item === SITE_ADMIN) > 0) {
+      isSiteAdmin = true;
+    }
+
+    if (!isSiteAdmin) {
+      const owner = `${req.erm.document.owner}`;
+      if (owner === siteAdminId) {
+        res.send(401);
+      } else {
+        next();
+      }
+    } else {
+      next();
+    }
+  }
+});
 restify.serve(router, LRS);
 restify.serve(router, Statement);
 restify.serve(router, StatementForwarding);
