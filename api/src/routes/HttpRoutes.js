@@ -51,7 +51,7 @@ import personaIdentifierRESTHandler from 'api/routes/personas/personaIdentifierR
 import personaAttributeRESTHandler from 'api/routes/personas/personaAttributeRESTHandler';
 import * as routes from 'lib/constants/routes';
 
-const siteAdminId = '5b0c79f6265b3f30542b33ca';
+const siteAdminId = process.env.SITE_ADMIN_ID;
 const router = new express.Router();
 router.use(setNoCacheHeaders);
 
