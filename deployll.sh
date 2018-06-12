@@ -34,6 +34,14 @@ function yum_package ()
 # GENERIC FUNCTIONS IRRESPECTIVE OF OS  #
 #########################################
 
+# simple function to symlink useful commands
+function symlink_commands ()
+{
+    output_log "setting up symlink commands"
+    alias ll-pm2-logs="su - ${LOCAL_USER} -c 'pm2 logs'"
+}
+
+
 function determine_os_version ()
 {
     VERSION_FILE=/etc/issue.net
@@ -403,10 +411,19 @@ function base_install ()
             output_log "running git clone"
             if [[ $ENTERPRISE == true ]]; then
                 MAIN_REPO=https://github.com/LearningLocker/learninglocker_node
+                if [[ $GIT_USER != false ]]; then
+                    MAIN_REPO=https://${GIT_USER}:${GIT_PASS}@github.com/LearningLocker/learninglocker_node
+                    output_log "Cloning main repo with user: ${GIT_USER}"
+                fi
             else
                 MAIN_REPO=https://github.com/kampernet/learninglocker
             fi
+            # clone repo
             git clone -q -b ${GIT_BRANCH} $MAIN_REPO ${WEBAPP_SUBDIR}
+            # clear the history in case we passed in the user/pass
+            if [[ $GIT_USER != false ]]; then
+                history -c
+            fi
             if [[ -d ${WEBAPP_SUBDIR} ]]; then
                 output_log "no ${WEBAPP_SUBDIR} dir after git - problem"
                 break
@@ -644,6 +661,15 @@ function setup_nginx_enterprise ()
 }
 
 
+function find_clam_config ()
+{
+    CLAMD_CONFIG=/etc/clamd.conf
+    if [[ -f /etc/clamav/clamd.conf ]]; then
+        CLAMD_CONFIG=/etc/clamav/clamd.conf
+    fi
+}
+
+
 
 #################################################################################
 #                           DEBIAN / UBUNTU FUNCTIONS                           #
@@ -668,11 +694,28 @@ function debian_install ()
     fi
 
     if [[ ! `command -v python` ]]; then
-        output "Something seems to have gone wrong in installing basic software - exiting"
-        exit 0
+        if [[ `command -v python3` ]]; then
+            output "Symlinking python3 to python for Yarn"
+            ln -s `command -v python3` /usr/bin/python
+        else
+            output "Something seems to have gone wrong in installing basic software, can't find python or python3 - exiting"
+            exit 0
+        fi
     fi
 
+    INSTALL_NODE=false
     if [[ ! `command -v nodejs` ]]; then
+        INSTALL_NODE=true
+        output_log "installing nodejs"
+    elif [[ `nodejs --version | cut -d'.' -f 1` != $NODE_VERSION_STRING ]]; then
+        INSTALL_NODE=true
+        output_log "updating nodejs"
+    else
+        CUR_NODE_VERSION=`nodejs --version | cut -d'.' -f 1`
+        output_log "current node version is found as ${CUR_NODE_VERSION}"
+    fi
+
+    if [[ $INSTALL_NODE == true ]]; then
         curl -sL https://deb.nodesource.com/setup_${NODE_VERSION} | bash - >> $OUTPUT_LOG 2>>$ERROR_LOG
         apt-get -y -qq install nodejs >> $OUTPUT_LOG 2>>$ERROR_LOG
     else
@@ -680,10 +723,19 @@ function debian_install ()
     fi
 
 
-    INSTALLED_NODE_VERSION=`node --version`
+    if [[ `nodejs --version | cut -d'.' -f 1` != $NODE_VERSION_STRING ]]; then
+        output "Something went wrong in installing/updating nodejs. This is likely a fault in your apt config. Can't continue"
+        exit 0
+    fi
+
+
+    INSTALLED_NODE_VERSION=`nodejs --version`
     if [[ $INSTALLED_NODE_VERSION == "" ]]; then
-        output "ERROR :: node doesn't seem to be installed - exiting"
-        exit 1
+        INSTALLED_NODE_VERSION=`node --version`
+        if [[ $INSTALLED_NODE_VERSION == "" ]]; then
+            output "ERROR :: node doesn't seem to be installed - exiting"
+            exit 1
+        fi
     fi
     output "node version - $INSTALLED_NODE_VERSION"
 
@@ -694,16 +746,6 @@ function debian_install ()
         apt-get -y -qq install yarn >> $OUTPUT_LOG 2>>$ERROR_LOG
     else
         output "yarn already installed"
-    fi
-
-    if [[ ! `command -v python` ]]; then
-        if [[ `command -v python3` ]]; then
-            output "Symlinking python3 to python for Yarn"
-            ln -s `command -v python3` /usr/bin/python
-        else
-            output "FATAL Error - can't find python. Path: ${PATH} EUID:${EUID}"
-            exit 0
-        fi
     fi
 }
 
@@ -881,7 +923,19 @@ function redhat_install ()
         fi
     fi
 
+    INSTALL_NODE=false
     if [[ ! `command -v nodejs` ]]; then
+        output_log "installing node"
+        INSTALL_NODE=true
+    elif [[ `nodejs --version | cut -d'.' -f 1` != $NODE_VERSION_STRING ]]; then
+        output_log "updating node"
+        INSTALL_NODE=true
+    else
+        CUR_NODE_VERSION=`nodejs --version | cut -d'.' -f 1`
+        output_log "current node version is found as ${CUR_NODE_VERSION}"
+    fi
+
+    if [[ $INSTALL_NODE == true ]]; then
         output "setting up nodejs repo...." true
         curl --silent --location https://rpm.nodesource.com/setup_${NODE_VERSION} | bash - >> $OUTPUT_LOG 2>>$ERROR_LOG &
         print_spinner true
@@ -892,11 +946,13 @@ function redhat_install ()
         output "Node.js already installed"
     fi
 
-
-    INSTALLED_NODE_VERSION=`node --version`
+    INSTALLED_NODE_VERSION=`nodejs --version`
     if [[ $INSTALLED_NODE_VERSION == "" ]]; then
-        output "ERROR :: node doesn't seem to be installed - exiting"
-        exit 1
+        INSTALLED_NODE_VERSION=`node --version`
+        if [[ $INSTALLED_NODE_VERSION == "" ]]; then
+            output "ERROR :: node doesn't seem to be installed - exiting"
+            exit 1
+        fi
     fi
     output "node version - $INSTALLED_NODE_VERSION"
 
@@ -968,6 +1024,9 @@ function redhat_nginx ()
     fi
 
 
+    if [[ ! -d /etc/nginx/conf.d ]]; then
+        mkdir -p /etc/nginx/conf.d
+    fi
     NGINX_CONFIG=/etc/nginx/conf.d/learninglocker.conf
     XAPI_ENV=${PWD}/${XAPI_SUBDIR}/.env
     BASE_ENV=${PWD}/${WEBAPP_SUBDIR}/.env
@@ -1109,6 +1168,8 @@ LOCAL_PATH=false
 LOCAL_USER=false
 TMPDIR=$_TD/.tmpdist
 GIT_BRANCH="master"
+GIT_USER=false
+GIT_PASS=false
 XAPI_BRANCH="master"
 MIN_REDIS_VERSION="2.8.11"
 MIN_MONGO_VERSION="3.0.0"
@@ -1118,6 +1179,7 @@ REDIS_INSTALLED=false
 PM2_OVERRIDE=false
 NODE_OVERRIDE=false
 NODE_VERSION=6.x
+NODE_VERSION_STRING=v6
 UPDATE_MODE=false
 GIT_ASK=false
 GIT_REV=false
@@ -1140,6 +1202,8 @@ ENTERPRISE=false        # if true then do things specific to enterprise (ie: don
                         # this is designed to be mostly the same as the OS model so search for this variable to see differences
                         # Can be set with '-e 1' as a command line param - you'll need to have github access to the private repos for it to work
 ENTERPRISE_IGNORE_STARTUP=false
+FORCE_MONGO_NOINSTALL=false
+FORCE_REDIS_NOINSTALL=false
 
 
 #################################################################################
@@ -1199,7 +1263,7 @@ fi
 #################################################################################
 OPTIND=1         # Reset in case getopts has been used previously in the shell.
 
-while getopts ":h:y:b:x:e:" OPT; do
+while getopts ":h:y:b:x:e:m:r:u:p:" OPT; do
     case "$OPT" in
         h)
             show_help
@@ -1232,6 +1296,26 @@ while getopts ":h:y:b:x:e:" OPT; do
             elif [[ $OPTARG == "2" ]]; then
                 ENTERPRISE_IGNORE_STARTUP=true
                 ENTERPRISE=true
+            fi
+        ;;
+        m)
+            if [[ $OPTARG == "1" ]]; then
+                FORCE_MONGO_NOINSTALL=true
+            fi
+        ;;
+        r)
+            if [[ $OPTARG == "1" ]]; then
+                FORCE_REDIS_NOINSTALL=true
+            fi
+        ;;
+        u)
+            if [[ -n $OPTARG ]]; then
+                GIT_USER=$OPTARG
+            fi
+        ;;
+        p)
+            if [[ -n $OPTARG ]]; then
+                GIT_PASS=$OPTARG
             fi
         ;;
     esac
@@ -1356,14 +1440,23 @@ while true; do
                 REDIS_INSTALL=true
                 REDIS_INSTALLED=true
             fi
+            if [[ $FORCE_MONGO_NOINSTALL == true ]]; then
+                output "forcing no mongo install"
+                MONGO_INSTALL=false
+            fi
+            if [[ $FORCE_REDIS_NOINSTALL == true ]]; then
+                output "forcing no redis install"
+                REDIS_INSTALL=false
+            fi
+
             output "automated setup"
             output "release path: $RELEASE_PATH"
             output "symlink path: $SYMLINK_PATH"
             output "user: $LOCAL_USER"
             # clamav
-            if [[ `command -v clamscan` ]]; then
+            if [[ `command -v clamdscan` ]]; then
                 output "ClamAV already installed"
-                CLAM_PATH=`command -v clamscan`
+                CLAM_PATH=`command -v clamdscan`
                 CLAM_INSTALLED=true
             else
                 CLAM_INSTALL=true
@@ -1513,7 +1606,10 @@ while true; do
 
 
         # check mongo
-        if [[ `command -v mongod` ]]; then
+        if [[ $FORCE_MONGO_NOINSTALL == true ]]; then
+            MONGO_INSTALL=false
+            output_log "forcing not installing mongodb"
+        elif [[ `command -v mongod` ]]; then
             output "MongoDB is already installed, not installing"
             CUR_MONGO_VERSION=`mongod --version | grep "db version" | sed "s?db version v??"`
             output_log "mongo version currently installed: $CUR_MONGO_VERSION"
@@ -1548,7 +1644,10 @@ while true; do
         fi
 
         # check redis
-        if [[ `command -v redis-server` ]]; then
+        if [[ $FORCE_REDIS_INSTALL == false ]]; then
+            REDIS_INSTALL=false
+            output_log "forcing not installing redis"
+        elif [[ `command -v redis-server` ]]; then
             output "Redis is already installed, not installing"
             CUR_REDIS_VERSION=`redis-server --version | awk '{print $3}' | sed 's/v=//'`
             output_log "Redis Version: $CUR_REDIS_VERSION"
@@ -1583,9 +1682,9 @@ while true; do
 
 
         # check for clamAV
-        if [[ `command -v clamscan` ]]; then
+        if [[ `command -v clamdscan` ]]; then
             output "ClamAV already installed"
-            CLAM_PATH=`command -v clamscan`
+            CLAM_PATH=`command -v clamdscan`
             CLAM_INSTALLED=true
         else
             CLAM_INSTALLED=false
@@ -1615,7 +1714,6 @@ done
 if [[ $PACKAGE_INSTALL == true ]]; then
     echo "PACKAGE QUESTIONS GO HERE"
 fi
-
 
 
 #################################################################################
@@ -1824,7 +1922,7 @@ if [[ $LOCAL_INSTALL == true ]] && [[ $UPDATE_MODE == false ]]; then
 
     # get the clamAV path if needed
     if [[ $CLAM_INSTALL == true ]]; then
-        CLAM_PATH=`command -v clamscan`
+        CLAM_PATH=`command -v clamdscan`
     fi
 
 
@@ -1951,7 +2049,9 @@ if [[ $LOCAL_INSTALL == true ]] && [[ $UPDATE_MODE == false ]]; then
 
     # update the .env with the path to clamav
     if [[ $CLAM_INSTALLED == true ]]; then
-        sed -i "s?#CLAMSCAN_BINARY=/usr/bin/clamscan?CLAMSCAN_BINARY=${CLAM_PATH}?" $LOCAL_PATH/${WEBAPP_SUBDIR}/.env
+        sed -i "s?#CLAMDSCAN_BINARY=/usr/bin/clamscan?CLAMSCAN_BINARY=${CLAM_PATH}?" $LOCAL_PATH/${WEBAPP_SUBDIR}/.env
+        find_clam_config
+        sed -i "s?#CLAMDSCAN_CONF=/etc/clamav/clamd.conf?CLAMSCAN_BINARY=${CLAMD_CONFIG}?" $LOCAL_PATH/${WEBAPP_SUBDIR}/.env
     fi
 
     # set up symlink
@@ -2088,6 +2188,8 @@ if [[ $LOCAL_INSTALL == true ]] && [[ $UPDATE_MODE == false ]]; then
         output "  cd ${LOCAL_PATH}; node cli/dist/server createSiteAdmin {your.email@address.com} {organisationName} {yourPassword}"
         echo
     fi
+
+    symlink_commands
 
     show_install_end_text
 
@@ -2346,7 +2448,16 @@ if [[ $SETUP_AMI == true ]] && [[ $ENTERPRISE == true ]]; then
     print_spinner true
 
     while true; do
-        git clone https://github.com/LearningLocker/devops /tmp/devops
+        DEVOPS_REPO=https://github.com/LearningLocker/devops /tmp/devops
+
+        if [[ $GIT_USER != false ]]; then
+            DEVOPS_REPO=https://${GIT_USER}:${GIT_PASS}@github.com/LearningLocker/devops
+            output_log "Cloning devops repo with user: ${GIT_USER}"
+        fi
+        git clone $DEVOPS_REPO /tmp/devops
+        if [[ $GIT_USER != false ]]; then
+            history -c
+        fi
         if [[ ! -d devops ]]; then
             output_log "no devops dir after git - problem"
         else
