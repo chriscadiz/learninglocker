@@ -1,7 +1,8 @@
-import mongoose from 'mongoose';
 import getJSONFromQuery from 'api/utils/getJSONFromQuery';
 import catchErrors from 'api/controllers/utils/catchErrors';
+import getPersonaFilter from 'api/controllers/utils/getPersonaFilter';
 import getFromQuery from 'api/utils/getFromQuery';
+import ClientError from 'lib/errors/ClientError';
 import getOrgFromAuthInfo from 'lib/services/auth/authInfoSelectors/getOrgFromAuthInfo';
 import getAuthFromRequest from 'lib/helpers/getAuthFromRequest';
 import getScopeFilter from 'lib/services/auth/filters/getScopeFilter';
@@ -15,8 +16,6 @@ import {
   omitBy,
 } from 'lodash';
 import { entityResponse, entitiesResponse } from 'api/controllers/utils/entitiesResponse';
-
-const objectId = mongoose.Types.ObjectId;
 
 const MODEL_NAME = 'personaAttribute';
 
@@ -38,14 +37,17 @@ const personaAttributeConnection = catchErrors(async (req, res) => {
     authInfo
   });
 
+  const parsedFilter = await parseQuery(getJSONFromQuery(req, 'filter', {}));
   const {
     personaId,
     ...inFilter
-  } = getJSONFromQuery(req, 'filter', {});
+  } = parsedFilter;
+
+  const personaIdFilter = getPersonaFilter(personaId, 'personaId');
 
   const filter = {
     ...inFilter,
-    personaId: personaId ? objectId(personaId) : undefined,
+    ...personaIdFilter,
     ...scopeFilter
   };
   const filterNoUndefined = omitBy(filter, isUndefined);
@@ -78,6 +80,12 @@ const addPersonaAttribute = catchErrors(async (req, res) => {
   const organisation = getOrgFromAuthInfo(authInfo);
 
   const { key, value, personaId } = req.body;
+  if (!key || !personaId) {
+    throw new ClientError('`key` and `personaId` must be included when creating an attribute');
+  }
+  if (value === undefined) {
+    throw new ClientError('Value must be defined');
+  }
 
   const { attribute } = await personaService.overwritePersonaAttribute({
     organisation,
@@ -154,18 +162,38 @@ const updatePersonaAttribute = catchErrors(async (req, res) => {
   });
 
   const organisation = getOrgFromAuthInfo(authInfo);
-  const { attribute } = await personaService.overwritePersonaAttribute({
-    ...req.body,
+
+  const { key, value, personaId } = req.body;
+  if (!key) {
+    throw new ClientError('`key` must be included when updating an attribute');
+  }
+  if (value === undefined) {
+    throw new ClientError('Value must be defined');
+  }
+
+  const { attribute } = await personaService.getAttribute({
     organisation,
     id: req.params.personaAttributeId
   });
 
+  if (personaId && personaId !== attribute.personaId) {
+    console.log(personaId, attribute.personaId);
+    throw new ClientError('Cannot change personaId on an attribute; create a new attribute for the persona and delete the old one');
+  }
+
+  const { attribute: updatedAttribute } = await personaService.overwritePersonaAttribute({
+    organisation,
+    personaId: attribute.personaId,
+    key,
+    value,
+  });
+
   updateQueryBuilderCache({
-    attributes: [attribute],
+    attributes: [updatedAttribute],
     organisation,
   });
 
-  return entityResponse(res, attribute);
+  return entityResponse(res, updatedAttribute);
 });
 const deletePersonaAttribute = catchErrors(async (req, res) => {
   const authInfo = getAuthFromRequest(req);

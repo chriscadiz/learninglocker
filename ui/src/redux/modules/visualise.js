@@ -24,6 +24,8 @@ import {
   modelsByFilterSelector,
   updateModel
 } from 'ui/redux/modules/models';
+import { metadataSelector } from 'ui/redux/modules/metadata';
+import { modelsSelector } from 'ui/redux/modules/models/selectors';
 import { UPDATE_MODEL } from 'ui/redux/modules/models/updateModel';
 import {
   TYPES,
@@ -54,23 +56,122 @@ export const fetchVisualisation = id => ({
 * Selectors
 */
 
+const dashboardShareableIdSelector = (state) => {
+  const out =
+    state.router &&
+    state.router.route &&
+    state.router.route.params &&
+    state.router.route.params.shareableId;
+  return out;
+};
+
+const dashboardIdSelector = (state) => {
+  const out =
+    state.router &&
+    state.router.route &&
+    state.router.route.params &&
+    state.router.route.params.dashboardId;
+  return out;
+};
+
+const routeNameSelector = (state) => {
+  const out =
+    state.router &&
+    state.router.route &&
+    state.router.route.name;
+  return out;
+};
+
  /**
  * gets the visualisation pipeline associated with the provided ID
  * @param  {String}          id  id of visualisation
  * @return {Immutable.Map}       Map of pipeline
  */
 
+const shareableDashboardFilterSelector = () => createSelector(
+  [metadataSelector, modelsSelector, dashboardShareableIdSelector, dashboardIdSelector, routeNameSelector],
+  (metadata, models, routeShareableId, routeDashboardId, routeName) => {
+    const viewingDashboardExternally = (routeName && routeName.indexOf('embedded-dashboard') !== -1);
+    const dashboards = models.get('dashboard', new Map());
+
+    // if we are viewing a shared dashboard externally
+    if (viewingDashboardExternally) {
+      if (!routeDashboardId) {
+        console.warn('Dashboard ID should exist on this route');
+        return new Map();
+      }
+
+      const theDashboard = dashboards.get(routeDashboardId, new Map());
+      if (!theDashboard) {
+        // No dashboard found, return an empty filter
+        return new Map();
+      }
+
+      if (!routeShareableId) {
+        // must be a legacy link (no shareable ID) - use the first filter
+        const legacyShare = theDashboard.get('remoteCache', new Map()).get('shareable', new List()).first();
+        return legacyShare.get('filter', new Map());
+      }
+
+      // otherwise find the filter on the dasboard's shareables and return it
+      const theShare = theDashboard.get('remoteCache', new Map())
+        .get('shareable', new List())
+        .find(share => share.get('_id') === routeShareableId);
+      return theShare.get('filter', new Map());
+    }
+
+    const expandedKey = (metadata || new Map())
+      .get('dashboardSharing', new Map())
+      .findKey(share => share.get('isExpanded', false) === true);
+
+    if (!expandedKey) {
+      // we aren't filtering - return empty filter
+      return new Map();
+    }
+
+    // if we are filtering due to an expanded shareable model
+    // Find the dashboard with the corresponding shareable ID
+    const theDashboard = dashboards.find(dash =>
+      dash.get('remoteCache', new Map())
+      .get('shareable', new List())
+      .find(share =>
+        (share.get('_id') === expandedKey)
+      )
+    );
+
+    // return the filter from that dashboard's shareable model
+    return theDashboard.get('remoteCache', new Map())
+      .get('shareable', new List())
+      .find(share => share.get('_id') === expandedKey)
+      .get('filter', new Map());
+  }
+);
+
 export const visualisationPiplelinesSelector = (
   id,
   cb = pipelinesFromQueries // whilst waiting for https://github.com/facebook/jest/issues/3608
 ) => createSelector(
-  [modelsSchemaIdSelector('visualisation', id)],
-  (visualisation) => {
+  [modelsSchemaIdSelector('visualisation', id), shareableDashboardFilterSelector()],
+  (visualisation, filter) => {
     if (!visualisation) return new List();
     const type = visualisation.get('type');
     const journey = visualisation.get('journey');
     const previewPeriod = visualisation.get('previewPeriod');
-    const queries = visualisation.get('filters', new List());
+    const queries = visualisation.get('filters', new List()).map((vFilter) => {
+      if (!filter) {
+        return vFilter;
+      }
+
+      return new Map({
+        $match: new Map({
+          $and: new List([
+            vFilter.get('$match', new Map()),
+            filter
+          ])
+        })
+      });
+    });
+
     const axes = unflattenAxes(visualisation);
     return cb(queries, axes, type, previewPeriod, journey);
   }
