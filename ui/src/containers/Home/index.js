@@ -199,7 +199,7 @@ class Home extends Component {
                     <div>
                       <h4>Your Organisations</h4>
                       {
-                        orgSearch !== '' || models.size > 5 ? (
+                        orgSearch !== '' || models.size > 50 ? (
                           <DebounceInput
                             className="form-control"
                             debounceTimeout={377}
@@ -242,8 +242,10 @@ export default compose(
   withProps(({ authUser, orgSearch }) => {
     const userOrgs = authUser.get('organisations', new ImmutList());
     const searchFilter = queryStringToQuery(orgSearch, 'organisation');
-    const userFilter = fromJS({ _id: { $in: userOrgs } });
-    const filter = userFilter.merge(searchFilter);
+    let filter = fromJS({ _id: { $in: userOrgs.slice(0, 100) } });
+    if (orgSearch && orgSearch.trim().length > 0) {
+      filter = searchFilter;
+    }
     const sort = fromJS({ name: 1, _id: -1 });
     return { filter, sort };
   }),
