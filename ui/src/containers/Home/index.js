@@ -20,6 +20,8 @@ import smallLogo from 'ui/static/smallLogo.png';
 import moment from 'moment';
 import styles from './styles.css';
 
+let showSearch = false;
+
 class Home extends Component {
   static propTypes = {
     models: PropTypes.instanceOf(ImmutList),
@@ -199,7 +201,7 @@ class Home extends Component {
                     <div>
                       <h4>Your Organisations</h4>
                       {
-                        orgSearch !== '' || models.size > 50 ? (
+                        orgSearch !== '' || showSearch ? (
                           <DebounceInput
                             className="form-control"
                             debounceTimeout={377}
@@ -245,6 +247,9 @@ export default compose(
     let filter = fromJS({ _id: { $in: userOrgs.slice(0, 100) } });
     if (orgSearch && orgSearch.trim().length > 0) {
       filter = searchFilter;
+    }
+    if (userOrgs.size > 50) {
+      showSearch = true;
     }
     const sort = fromJS({ name: 1, _id: -1 });
     return { filter, sort };
