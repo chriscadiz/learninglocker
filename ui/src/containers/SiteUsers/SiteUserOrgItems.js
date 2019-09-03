@@ -12,7 +12,7 @@ const enhance = compose(
     const schema = 'organisation';
     const organisations = user
       .get('organisations')
-      .map(org => new Map({ $oid: org })).splice(0, 10);
+      .map(org => new Map({ $oid: org })).splice(0, 100);
     const filter = new Map({
       _id: new Map({
         $in: organisations
